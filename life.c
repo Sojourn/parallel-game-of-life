@@ -29,7 +29,7 @@ typedef struct
 /* Aggregation of variables used to synchronize the worker threads */
 typedef struct
 {
-	pthread_mutex_t mutex;        /* Mutex protecting generation changes  */
+	pthread_mutex_t gen_mutex;    /* Mutex protecting generation changes  */
 	pthread_mutex_t alloc_mutex;  /* Mutex protecting work allocation  */
 	pthread_cond_t synch_cv;      /* CV used by main to wait for worker threads to finish a generation */
 	pthread_cond_t worker_cv;     /* CV used by worker threads to wait for a generation change  */
@@ -37,7 +37,7 @@ typedef struct
 	grid_t *src;                  /* Soucre grid for the current generation  */
 	grid_t *dst;                  /* Destination grid for the current generation */
 	size_t work_index;            /* Used to allocate work */
-	size_t work_mod;              /* Used to allocation work remainder */
+	size_t work_mod;              /* Used to allocate work remainder */
 	size_t current_gen;           /* Current generation */
 	size_t gen_done;              /* Incremented by worker threads when they finish a generation  */
 } synch_t;
@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
 	
 	pthread_cond_init(&synch.synch_cv, NULL);
 	pthread_cond_init(&synch.worker_cv, NULL);
-	pthread_mutex_init(&synch.mutex, NULL);
+	pthread_mutex_init(&synch.gen_mutex, NULL);
 	pthread_mutex_init(&synch.alloc_mutex, NULL);
 
 	synch.work_mod = (synch.params.size * synch.params.size) % synch.params.thread_count;
@@ -121,9 +121,9 @@ int main(int argc, char **argv) {
 		/* Synchronize the worker threads for a generation change  */
 		if(synch.params.thread_count > 1)
 		{
-			pthread_mutex_lock(&synch.mutex);
+			pthread_mutex_lock(&synch.gen_mutex);
 			while(synch.gen_done != (synch.params.thread_count - 1))
-				pthread_cond_wait(&synch.synch_cv, &synch.mutex);	
+				pthread_cond_wait(&synch.synch_cv, &synch.gen_mutex);	
 		}		
 	
 		/* Update synch for next generation */		
@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
 		if(synch.params.thread_count > 1)
 		{	
 			pthread_cond_broadcast(&synch.worker_cv);
-			pthread_mutex_unlock(&synch.mutex);
+			pthread_mutex_unlock(&synch.gen_mutex);
 		}
 	}	
 
@@ -323,21 +323,21 @@ void *worker_start(void *args)
 	{
 		
 		/* Wait for buffer swap */
-		pthread_mutex_lock(&synch->mutex);
+		pthread_mutex_lock(&synch->gen_mutex);
 		while(last_gen == synch->current_gen)
 			pthread_cond_wait(
 				&synch->worker_cv,
-				&synch->mutex);
-		pthread_mutex_unlock(&synch->mutex);
+				&synch->gen_mutex);
+		pthread_mutex_unlock(&synch->gen_mutex);
 
 		worker_eval(args, &work);
 		
 		/* Let the main thread know we're done with the gen */
 		last_gen++;
-		pthread_mutex_lock(&synch->mutex);
+		pthread_mutex_lock(&synch->gen_mutex);
 		synch->gen_done++;
 		pthread_cond_signal(&synch->synch_cv);
-		pthread_mutex_unlock(&synch->mutex);
+		pthread_mutex_unlock(&synch->gen_mutex);
 	}
 
 	return 0;
